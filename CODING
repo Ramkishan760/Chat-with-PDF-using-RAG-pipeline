@@ -1,0 +1,124 @@
+CODING
+
+CODE FOR  CHAT WITH PDF USING RAG PIPELINE
+
+Chat-with-PDF-using-RAG-pipeline
+
+
+LIBRARIES
+ 
+ pdfplumber langchain openai pinecone-client sentence-transformers
+
+STEPS
+
+1.PDF EXTRACTIONS 
+
+import pdfplumber
+
+def extract_text_from_pdf(pdf_path):
+    """Extract text from a PDF file."""
+    with pdfplumber.open(pdf_path) as pdf:
+        text = ''
+        for page in pdf.pages:
+            text += page.extract_text() + '\n'
+    return text
+
+
+2.Chunking the text
+
+def chunk_text(text, chunk_size=500, overlap=50):
+    """Chunk text into smaller pieces of fixed size with overlap."""
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), chunk_size - overlap):
+        chunk = " ".join(words[i:i + chunk_size])
+        chunks.append(chunk)
+    return chunks
+
+3.Embedding the data
+
+from sentence_transformers import SentenceTransformer
+
+def generate_embeddings(chunks, model_name="all-MiniLM-L6-v2"):
+    """Generate embeddings for text chunks using Sentence Transformers."""
+    model = SentenceTransformer(model_name)
+    embeddings = model.encode(chunks)
+    return embeddings
+
+Step 4: Store in a Vector Database
+
+import pinecone
+
+def initialize_pinecone(api_key, environment, index_name):
+    """Initialize Pinecone connection and create index."""
+    pinecone.init(api_key=api_key, environment=environment)
+    if index_name not in pinecone.list_indexes():
+        pinecone.create_index(index_name, dimension=384)  # Adjust dimension based on the embedding model
+    return pinecone.Index(index_name)
+
+def store_embeddings(index, chunks, embeddings, metadata=None):
+    """Store embeddings with metadata in Pinecone."""
+    for i, embedding in enumerate(embeddings):
+        metadata_entry = {"text": chunks[i]}
+        if metadata:
+            metadata_entry.update(metadata)
+        index.upsert([(str(i), embedding.tolist(), metadata_entry)])
+
+Step 5: Query Processing
+
+def query_pinecone(index, query_text, model, top_k=5):
+    """Query Pinecone for the most relevant chunks."""
+    query_embedding = model.encode([query_text])[0]
+    results = index.query(query_embedding.tolist(), top_k=top_k, include_metadata=True)
+    return [res['metadata']['text'] for res in results['matches']]
+
+Step 6: Generate Responses Using an LLM
+
+import openai
+
+def generate_response(query, context_chunks):
+    """Generate a response using an LLM."""
+    context = "\n\n".join(context_chunks)
+    prompt = f"Answer the following query based on the context:\n\nContext:\n{context}\n\nQuery: {query}\n\nAnswer:"
+    response = openai.Completion.create(
+        engine="text-davinci-003",
+        prompt=prompt,
+        max_tokens=500,
+        temperature=0.7
+    )
+    return response.choices[0].text.strip()
+
+7. Main Pipeline
+def rag_pipeline(pdf_path, user_query, pinecone_api_key, pinecone_env, pinecone_index_name):
+    text = extract_text_from_pdf(pdf_path)
+   
+    chunks = chunk_text(text)
+   
+    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+    embeddings = generate_embeddings(chunks, model_name="all-MiniLM-L6-v2")
+    
+    pinecone_index = initialize_pinecone(pinecone_api_key, pinecone_env, pinecone_index_name)
+    store_embeddings(pinecone_index, chunks, embeddings)
+   
+    relevant_chunks = query_pinecone(pinecone_index, user_query, embedding_model)
+   
+    openai.api_key = "your_openai_api_key"
+    response = generate_response(user_query, relevant_chunks)
+    
+    return response
+
+8.. Running the Pipeline
+if __name__ == "__main__":
+    pdf_path = "example.pdf"  # Path to your PDF file
+    user_query = "What are the key points discussed in the document?"
+    pinecone_api_key = "your_pinecone_api_key"
+    pinecone_env = "us-west1-gcp"
+    pinecone_index_name = "rag-pipeline"
+    
+    answer = rag_pipeline(pdf_path, user_query, pinecone_api_key, pinecone_env, pinecone_index_name)
+    print("Answer:", answer)
+
+
+
+
+
